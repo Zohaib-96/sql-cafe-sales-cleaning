@@ -1,19 +1,19 @@
-# Cafe Sales – SQL Data Cleaning and Analysis
+# ☕ Cafe Sales – SQL Data Cleaning, Joins, and Analysis
 
 <p align="left">
   <img src="https://img.shields.io/badge/MySQL-100%25-blue?style=for-the-badge&logo=mysql&logoColor=white"/>
 </p>
 
-This project is a small end‑to‑end example of cleaning and analysing a **dirty cafe sales dataset** with **MySQL**.  
-The goal is to show how I can work with messy real‑world data and prepare it for analysis.
+This project is an end‑to‑end example of taking a **dirty cafe sales dataset** from Kaggle, cleaning it with **MySQL**, and then analysing it using **joins, CTEs, and basic window‑style logic**.  
+The goal is to show that I can work with messy real‑world data, turn it into a clean table, and answer business questions using SQL.
 
 ---
 
-## Dataset
+## 📂 Dataset
 
-- Source: https://www.kaggle.com/datasets/ahmedmohamed2003/cafe-sales-dirty-data-for-cleaning-training/data
-- Rows: 10,000
-- Columns: 8
+- Source: [Kaggle – Cafe Sales – Dirty Data for Cleaning Training](https://www.kaggle.com/datasets/ahmedmohamed2003/cafe-sales-dirty-data-for-cleaning-training/data) [web:21]
+- Rows: ~10,000  
+- Columns: 8  
   - Transaction ID  
   - Item  
   - Quantity  
@@ -23,161 +23,176 @@ The goal is to show how I can work with messy real‑world data and prepare it f
   - Location  
   - Transaction Date  
 
-The raw table contains many issues: missing values, `UNKNOWN` / `ERROR` strings, inconsistent text, and incorrect totals.
+**The raw data contains:**
+- Missing values  
+- `UNKNOWN` / `ERROR` strings  
+- Inconsistent text (different spellings/casing)  
+- Incorrect or missing totals  
 
 ---
 
-## Database Objects
+## 🏗️ Database Objects & Files
 
-- **Raw table:** `dirty_cafe_sales`  
-- **Staging view:** `c_cafe_view`  
-- **Clean table:** `cafe_sales_clean`  
+**Tables & View**
+- `dirty_cafe_sales` – original raw data  
+- `c_cafe_view` – staging view used to standardise text and NULLs  
+- `cafe_sales_clean` – final cleaned fact table  
+- `item_category` – small lookup/dimension table that maps each item to:
+  - `category` (Food vs Beverage vs Unknown)  
+  - `is_hot_cold` (Hot, Cold, Neither)
 
-SQL scripts:
 
-- `sql/01_create_clean_table.sql` – full cleaning pipeline  
-- `sql/02_analysis_queries.sql` – analysis / reporting queries
+## Project Structure
 
+```text
+Sql/
+├── 01_create_clean_table.sql
+│   ├── Profiling raw data
+│   ├── Creating staging view
+│   ├── Building cafe_sales_clean
+│   ├── Creating item_category lookup
+│   └── Core cleaning, joins, CTE utilities
+└── 02_analysis_queries.sql
+    ├── KPI queries
+    ├── Revenue breakdowns
+    ├── Monthly trend
+    └── CTE business questions
+```
+
+
+## 🧹 Data Cleaning (SQL)
+
+### 1. Profiling the raw data
+- Used DESCRIBE and COUNT(*) to understand shape (≈9k rows after import)
+- Wrote conditional SUM(CASE WHEN ...) checks to count:
+- Nulls, empty strings, UNKNOWN, ERROR in text columns
+- Used SELECT DISTINCT to inspect Item, Payment Method, Location, Transaction Date
+- Checked duplicate Transaction ID with GROUP BY ... HAVING COUNT(*) > 1
+
+### 2. Staging view (`c_cafe_view`)
+Applied TRIM() to remove extra spaces from text
+- Converted dirty values ('', UNKNOWN, ERROR) to NULL for:
+- Item, Quantity, Price Per Unit, Total Spent, Payment Method, Location, Transaction Date
+- Kept "raw" versions (item_raw, quantity_raw, price_raw, total_raw, payment_raw, location_raw, date_raw)
+
+### 3. Building clean table (`cafe_sales_clean`)
+CREATE TABLE cafe_sales_clean AS SELECT from c_cafe_view with:
+- transaction_id – from transaction_id_raw
+- item – COALESCE(item_raw, 'Unknown item')
+- quantity_num – CAST(quantity_raw AS UNSIGNED)
+- price_per_unit_num – CAST(price_raw AS DECIMAL(10,2))
+- total_spent_num – CAST(total_raw AS DECIMAL(10,2))
+- payment_method – COALESCE(payment_raw, 'Unspecified')
+- location – COALESCE(location_raw, 'Unknown location')
+- transaction_date_raw – cleaned text version of the date
+
+### 4. Recomputing numeric values
+- Ensured Quantity × Price Per Unit = Total Spent consistency:
+- If total_spent_num NULL but quantity_num and price_per_unit_num exist → recompute
+- If price_per_unit_num NULL but total_spent_num and quantity_num exist → recompute
+- If quantity_num NULL but total_spent_num and price_per_unit_num exist → recompute
+
+### 5. Cleaning categories
+- Payment method: Normalised strings with LOWER() and CASE → Cash, Credit Card, Digital Wallet, Unspecified
+- Location: Filled missing/invalid → 'Unknown location'
+  
+### 6. Handling dates
+- Input dates in YYYY-MM-DD format
+- Used CAST(... AS DATE) → transaction_date column
+- Kept rows with NULL dates, filtered for time series analysis
+
+### 7. Final renaming
+- quantity_num → quantity
+- price_per_unit_num → price_per_unit
+- total_spent_num → total_spent
+
+**Result:** `cafe_sales_clean` – tidy fact table ready for analysis.
 ---
 
-## Data Cleaning Steps (SQL)
+## 🔗 Joins & Item Category Table
 
-1. **Profiling the raw data**
-   - Described the table structure.
-   - Counted total rows.
-   - Checked random samples.
-   - Counted missing / bad values using conditions on `NULL`, empty strings, `UNKNOWN`, and `ERROR`.
-   - Listed distinct values for `Item`, `Payment Method`, `Location`, etc.
-   - Checked duplicates based on `Transaction ID`.
-
-2. **Creating a staging view (`c_cafe_view`)**
-   - Used `TRIM()` to remove extra spaces.
-   - Replaced `UNKNOWN`, `ERROR`, and empty strings with `NULL` for:
-     - Item  
-     - Quantity  
-     - Price Per Unit  
-     - Total Spent  
-     - Payment Method  
-     - Location  
-     - Transaction Date  
-   - Kept each column in a `_raw` form (for example: `item_raw`, `total_raw`).
-
-3. **Building the clean table (`cafe_sales_clean`)**
-   - Created a new table from the view with:
-     - `transaction_id` (from raw text id)
-     - `item` – `COALESCE(item_raw, 'Unknown item')`
-     - `quantity_num` – `CAST(quantitiy_raw AS UNSIGNED)`
-     - `price_per_unit_num` – `CAST(price_raw AS DECIMAL(10,2))`
-     - `total_spent_num` – `CAST(total_raw AS DECIMAL(10,2))`
-     - `location` – `COALESCE(location_raw, 'Unknown location')`
-     - `payment_method` – `COALESCE(payment_raw, 'Unspecified')`
-     - `transaction_date_raw` – cleaned text date
-   - This separates the clean numeric fields from the original text.
-
-4. **Recomputing numeric values**
-   - Ensured the three main numeric columns are consistent:
-     - `total_spent_num = quantity_num * price_per_unit_num`
-   - Used three `UPDATE` statements:
-     - If **total_spent_num** is `NULL` but quantity and price exist, set `total_spent_num = quantity_num * price_per_unit_num`.
-     - If **price_per_unit_num** is `NULL` but total and quantity exist, set `price_per_unit_num = total_spent_num / quantity_num`.
-     - If **quantity_num** is `NULL` but total and price exist, set `quantity_num = total_spent_num / price_per_unit_num`.
-   - Checked how many rows still had missing numeric values after this step.
-
-5. **Cleaning categories**
-   - Standardised **payment method**:
-     - Replaced missing / invalid values with `Unspecified`.
-     - Mapped values like `unspecified` to `Unspecified`.
-   - Standardised **location**:
-     - Replaced missing values with `Unknown location`.
-
-6. **Handling dates**
-   - Counted how many rows had `NULL` or empty transaction dates.
-   - Removed rows with completely missing transaction dates (for a clean time series).
-   - Converted `transaction_date_raw` from text to `DATE` and renamed it to `transaction_date`.
-
-7. **Renaming columns for analysis**
-   - Renamed:
-     - `total_spent_num` → `total_spent`
-     - `quantity_num`   → `quantity`
-     - `price_per_unit_num` → `price_per_unit`
-
-The final table `cafe_sales_clean` is ready for analysis and reporting.
-
----
-
-## Exploratory Data Analysis (SQL)
-
-All queries are stored in `sql/02_analysis_queries.sql`.
-
-1. **Key metrics**
+**Created lookup table for joins:**
 
 ```sql
-SELECT
-    SUM(total_spent)   AS revenue,
-    COUNT(*)           AS total_transactions,
-    AVG(total_spent)   AS avg_spend
-FROM cafe_sales_clean;
+CREATE TABLE item_category (
+    item_name   VARCHAR(50),
+    category    VARCHAR(50), 
+    is_hot_cold VARCHAR(50)
+);
 
-result:
-Revenue: 76,690.50
-Total transactions: 8,596
-Average spend per transaction: ~8.92
+INSERT INTO item_category VALUES
+('Coffee',   'Beverage', 'Hot'),
+('Tea',      'Beverage', 'Hot'),
+('Juice',    'Beverage', 'Cold'),
+('Smoothie', 'Beverage', 'Cold'),
+('Cake',     'Food',     'Neither'),
+('Cookie',   'Food',     'Neither'),
+('Sandwich', 'Food',     'Neither'),
+('Salad',    'Food',     'Neither'),
+('Unknown item', 'Unknown', 'Unknown');
 
-#Revenue by location
+Revenue by category (Food vs Beverage)
+Hot vs Cold beverage performance  
+Food items performance (quantity, revenue, transactions)
+Category performance by location
+High-value food transactions (>20)
+Monthly beverage revenue
+Items generating >$10,000 revenue
+```
+Revenue by category (Food vs Beverage)
+Hot vs Cold beverage performance  
+Food items performance (quantity, revenue, transactions)
+Category performance by location
+High-value food transactions (>20)
+Monthly beverage revenue
+Items generating >$10,000 revenue
 
-SELECT 
-    location,
-    SUM(total_spent)      AS revenue,
-    COUNT(transaction_id) AS num_transactions
-FROM cafe_sales_clean
-GROUP BY location
-ORDER BY revenue DESC;
+📊 Key Results (Cleaned Data)
+Core KPIs
+- Revenue: 76,690.50
+- Total transactions: 8,596  
+- Average spend per transaction: ≈8.92
+  
+*Revenue by location*
+1. Unknown location: 30,475 revenue, 3,407 transactions
+2. In-store: 23,353 revenue, 2,726 transactions  
+3. Takeaway: 22,862 revenue, 2,463 transactions
+   
+*Top 5 items by revenue*
+1. Salad – 14,890.00
+2. Sandwich – 11,680.00  
+3. Smoothie – 11,608.00
+4. Juice – 9,108.00
+5. Cake – 9,009.00
 
-insight:
-Unknown location has the highest recorded revenue, followed by In‑store and Takeaway.
+📐 CTEs & Business Questions
+*Month‑over‑month revenue change*
+```sql
+WITH monthly_rev AS (
+    SELECT DATE_FORMAT(transaction_date, '%Y-%m-01') AS report_month,
+           SUM(total_spent) AS revenue
+    FROM cafe_sales_clean 
+    WHERE transaction_date IS NOT NULL
+    GROUP BY report_month
+)
+SELECT m_current.report_month,
+       m_current.revenue AS current_month_rev,
+       m_previous.revenue AS prev_month_rev,
+       m_current.revenue - m_previous.revenue AS revenue_diff
+FROM monthly_rev m_current
+LEFT JOIN monthly_rev m_previous
+  ON m_current.report_month = DATE_ADD(m_previous.report_month, INTERVAL 1 MONTH)
+ORDER BY m_current.report_month;
+```
+*Revenue share by payment method*
+```sql
+WITH total_rev AS (SELECT SUM(total_spent) AS grand_total FROM cafe_sales_clean),
+     pay_rev AS (SELECT payment_method, SUM(total_spent) AS pay_method_rev 
+                 FROM cafe_sales_clean GROUP BY payment_method)
+SELECT p.payment_method, 
+       ROUND(p.pay_method_rev / t.grand_total * 100, 2) AS percent_of_total
+FROM pay_rev p CROSS JOIN total_rev t
+ORDER BY percent_of_total DESC;
+```
 
-#Top 5 items by revenue
 
-SELECT 
-    item,
-    SUM(total_spent) AS revenue
-FROM cafe_sales_clean
-GROUP BY item
-ORDER BY revenue DESC
-LIMIT 5;
-
-
-SELECT 
-    item,
-    SUM(total_spent) AS revenue
-FROM cafe_sales_clean
-GROUP BY item
-ORDER BY revenue DESC
-LIMIT 5;
-
-Result:
-
-Salad
-Sandwich
-Smoothie
-Juice
-Cake
-
-#How many times each item was sold
-
-SELECT 
-    item,
-    COUNT(*) AS transactions
-FROM cafe_sales_clean
-GROUP BY item
-ORDER BY transactions DESC;
-
-Monthly sales trend
-SELECT 
-    DATE_FORMAT(transaction_date, '%Y-%m') AS month,
-    SUM(total_spent)                       AS revenue
-FROM cafe_sales_clean
-GROUP BY month
-ORDER BY month;
-
-This query gives a clean monthly revenue view for 2023, which is more accurate than the trend from the raw table.
